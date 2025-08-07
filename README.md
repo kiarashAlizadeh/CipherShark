@@ -13,7 +13,11 @@
 - ✅ IPv4 optimized
 - ✅ Interactive configuration
 
-## Quick Install
+## 🛠 Quick Installation
+
+To install and run the VPN setup script, simply execute the following commands in your terminal:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/kiarashAlizadeh/CipherShark/vpn-setup.sh | bash
+curl -O https://raw.githubusercontent.com/kiarashAlizadeh/CipherShark/master/vpn-setup.sh
+chmod +x vpn-setup.sh
+./vpn-setup.sh
