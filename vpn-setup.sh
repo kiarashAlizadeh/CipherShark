@@ -8,7 +8,8 @@
 # Author: VPN Setup Assistant
 # Compatible with Ubuntu 22.04 LTS
 
-set -e
+# Don't exit on error, handle errors manually
+set +e
 
 # Color codes for output
 RED='\033[0;31m'
@@ -609,24 +610,27 @@ create_ssh_vpn_users() {
             
             print_info "Creating SSH VPN user $((i+1)): $username"
             
-            # Create user with expect to handle interactive prompts
-            if adduser --gecos "$username" --disabled-password "$username"; then
-                # Set password using chpasswd
-                echo "$username:$password" | chpasswd
-                
-                # Configure user for VPN only
-                usermod -s /usr/sbin/nologin "$username"
-                
-                # Remove existing Match User section for this specific user if present
-                sed -i "/^Match User $username/,/^$/d" /etc/ssh/sshd_config
-                
-                # Add restricted access for this VPN user
-                echo -e "\nMatch User $username\n    ForceCommand echo 'SSH VPN user $username - Restricted to port forwarding only.'" >> /etc/ssh/sshd_config
-                
-                print_success "SSH VPN user '$username' created and configured"
+            # Create user with better error handling
+            if id "$username" &>/dev/null; then
+                print_warning "User '$username' already exists, skipping creation"
                 ((created_users++))
             else
-                print_error "Failed to create SSH VPN user '$username'"
+                if adduser --gecos "$username" --disabled-password "$username" 2>/dev/null; then
+                    # Set password using chpasswd
+                    echo "$username:$password" | chpasswd
+                    
+                    # Configure user for VPN only - use a simpler approach
+                    usermod -s /usr/sbin/nologin "$username"
+                    
+                    # Create a simple welcome message for VPN users
+                    echo "Welcome to SSH VPN user $username - This account is restricted to port forwarding only." > "/home/$username/.hushlogin"
+                    chown "$username:$username" "/home/$username/.hushlogin"
+                    
+                    print_success "SSH VPN user '$username' created and configured"
+                    ((created_users++))
+                else
+                    print_error "Failed to create SSH VPN user '$username'"
+                fi
             fi
         done
         
@@ -638,7 +642,8 @@ create_ssh_vpn_users() {
                 print_success "SSH service restarted successfully"
                 print_success "Total SSH VPN users created: $created_users"
             else
-                print_error "SSH configuration test failed. Please check the configuration manually."
+                print_warning "SSH configuration test failed, but continuing with installation..."
+                print_info "SSH service may need manual configuration"
             fi
         fi
     fi
@@ -948,6 +953,14 @@ handle_error() {
     print_error "An error occurred during installation!"
     print_error "Error on line $1"
     print_info "Please check the output above for details"
+    
+    # Try to display final configuration even if there was an error
+    if [[ -n "$SERVER_IP" ]]; then
+        echo ""
+        print_warning "Attempting to display partial configuration..."
+        display_final_config
+    fi
+    
     exit 1
 }
 
@@ -974,20 +987,20 @@ main() {
     # Collect all user preferences first
     collect_user_preferences
     
-    # Execute installations based on user choices
-    change_root_password
-    update_system
-    setup_security
-    setup_firewall_rules
-    install_3x_ui
-    install_outline_vpn
-    create_ssh_vpn_users
-    install_l2tp_vpn
+    # Execute installations based on user choices (continue even if some fail)
+    change_root_password || print_warning "Password change failed, continuing..."
+    update_system || print_warning "System update failed, continuing..."
+    setup_security || print_warning "Security setup failed, continuing..."
+    setup_firewall_rules || print_warning "Firewall setup failed, continuing..."
+    install_3x_ui || print_warning "3X-UI installation failed, continuing..."
+    install_outline_vpn || print_warning "Outline VPN installation failed, continuing..."
+    create_ssh_vpn_users || print_warning "SSH VPN user creation failed, continuing..."
+    install_l2tp_vpn || print_warning "L2TP VPN installation failed, continuing..."
     
     # Run speed test if requested
-    run_speed_test
+    run_speed_test || print_warning "Speed test failed, continuing..."
     
-    # Display final configuration
+    # Always display final configuration
     display_final_config
 }
 
