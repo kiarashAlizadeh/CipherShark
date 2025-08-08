@@ -252,9 +252,106 @@ collect_ssh_vpn_users() {
     done
 }
 
+# Function to load configuration from file
+load_config_file() {
+    local config_file=$1
+    
+    if [[ ! -f "$config_file" ]]; then
+        print_error "Configuration file '$config_file' not found!"
+        return 1
+    fi
+    
+    print_info "Loading configuration from '$config_file'..."
+    
+    # Source the configuration file
+    if source "$config_file" 2>/dev/null; then
+        print_success "Configuration loaded successfully!"
+        
+        # Parse SSH VPN users from array if present
+        if [[ ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+            SSH_VPN_USERS=()
+            SSH_VPN_PASSWORDS=()
+            
+            for user_entry in "${SSH_VPN_USERS[@]}"; do
+                if [[ $user_entry == *":"* ]]; then
+                    local username=$(echo "$user_entry" | cut -d':' -f1)
+                    local password=$(echo "$user_entry" | cut -d':' -f2)
+                    SSH_VPN_USERS+=("$username")
+                    SSH_VPN_PASSWORDS+=("$password")
+                fi
+            done
+        fi
+        
+        # Set firewall SSH port based on configuration
+        if [[ $CHANGE_SSH_PORT == "yes" ]]; then
+            FIREWALL_SSH_PORT=$NEW_SSH_PORT
+        else
+            FIREWALL_SSH_PORT="22"
+        fi
+        
+        # Map configuration variables to script variables
+        if [[ $CHANGE_ROOT_PASSWORD == "yes" ]]; then
+            CHANGE_PASSWORD="yes"
+            NEW_PASSWORD=$NEW_ROOT_PASSWORD
+        fi
+        
+        if [[ $DISABLE_ROOT_SSH == "yes" ]]; then
+            NEW_ADMIN_PASS=$NEW_ADMIN_PASSWORD
+        fi
+        
+        return 0
+    else
+        print_error "Failed to load configuration file!"
+        return 1
+    fi
+}
+
+# Function to ask for configuration file
+ask_for_config_file() {
+    print_header "Configuration File Detection"
+    
+    if ask_yes_no "Do you have a configuration file for automated setup?"; then
+        print_info "Please enter the name of your configuration file"
+        print_info "Common names: vpn-config.conf, config.conf, setup.conf"
+        print_info "The file should be in the same directory as this script"
+        
+        local config_file
+        get_input "Enter configuration file name:" "config_file" "false"
+        
+        if [[ -f "$config_file" ]]; then
+            if load_config_file "$config_file"; then
+                return 0
+            else
+                print_error "Failed to load configuration file. Falling back to interactive mode."
+                return 1
+            fi
+        else
+            print_error "Configuration file '$config_file' not found!"
+            if ask_yes_no "Do you want to try another file name?"; then
+                return ask_for_config_file
+            else
+                return 1
+            fi
+        fi
+    fi
+    
+    return 1
+}
+
 # Function to collect all user preferences
 collect_user_preferences() {
     print_header "Initial Configuration Questions"
+    
+    # First, try to load configuration file
+    if ask_for_config_file; then
+        print_success "Using configuration file for automated setup!"
+        print_info "All settings will be applied automatically."
+        sleep 2
+        return
+    fi
+    
+    print_info "Starting interactive configuration mode..."
+    sleep 1
     
     # Ask about password change
     if ask_yes_no "Do you want to change the root password?"; then
