@@ -11,7 +11,7 @@
 - [Introduction](#introduction)
 - [Features](#features)
 - [Supported VPN Services](#supported-vpn-services)
-- [Installation & Setup](#installation--setup)
+- [Installation & Setup](#installation-setup)
 - [Configuration File Usage](#configuration-file-usage)
 - [Configuration File Settings](#configuration-file-settings)
 - [Sample Configuration File](#sample-configuration-file)
@@ -20,7 +20,7 @@
 - [Contributing](#contributing)
 - [License](#license)
 
-## 🚀 Introduction
+<h2 id="introduction">🚀 Introduction</h2>
 
 CipherShark is an advanced Bash script that allows you to easily and automatically set up a complete VPN server on Ubuntu 22.04. This script supports multiple VPN protocols and includes advanced security features.
 
@@ -34,7 +34,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - **Error Handling**: Smart error management and continued installation even if issues occur
 - **Speed Testing**: Automatic internet speed testing
 
-## 🔧 Features
+<h2 id="features">🔧 Features</h2>
 
 ### 🔒 Security
 
@@ -59,7 +59,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - Internet speed testing
 - Optimized network configuration
 
-## 🛡️ Supported VPN Services
+<h2 id="supported-vpn-services">🛡️ Supported VPN Services</h2>
 
 ### 1. 3X-UI Panel 📱
 
@@ -89,7 +89,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - IPSec encryption
 - Simple configuration
 
-## 📦 Installation & Setup
+<h2 id="installation-setup">📦 Installation & Setup</h2>
 
 ### Prerequisites
 
@@ -102,7 +102,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 ```bash
 # Download the script
 wget https://raw.githubusercontent.com/kiarashAlizadeh/CipherShark/master/vpn-setup.sh
-# curl -O 
+# curl -O
 
 # Make executable
 chmod +x vpn-setup.sh
@@ -111,7 +111,7 @@ chmod +x vpn-setup.sh
 sudo ./vpn-setup.sh
 ```
 
-## ⚙️ Configuration File Usage
+<h2 id="configuration-file-usage">⚙️ Configuration File Usage</h2>
 
 ### Benefits of Using Configuration File
 
@@ -127,7 +127,7 @@ sudo ./vpn-setup.sh
 3. Run the script
 4. If configuration file exists, the script will use it
 
-## 📝 Configuration File Settings
+<h2 id="configuration-file-settings">📝 Configuration File Settings</h2>
 
 ### Security Section
 
@@ -189,7 +189,7 @@ RUN_SPEED_TEST=yes
 REBOOT_SERVER=no
 ```
 
-## 📄 Sample Configuration File
+<h2 id="sample-configuration-file">📄 Sample Configuration File</h2>
 
 The `vpn-config.conf` file includes all necessary settings:
 
@@ -282,7 +282,7 @@ SERVER_IP=
 # 6. The script will create a detailed summary after installation
 ```
 
-## 🚀 Usage Guide
+<h2 id="usage-guide">🚀 Usage Guide</h2>
 
 ### Method 1: Using Configuration File (Recommended)
 
@@ -314,8 +314,7 @@ sudo ./vpn-setup.sh
 5. **Security Setup**: Apply security settings
 6. **Summary Display**: Show final information and instructions
 
-## 🔧 Troubleshooting
-
+<h2 id="troubleshooting">🔧 Troubleshooting</h2>
 ### Issue: Script won't execute
 
 ```bash
@@ -416,7 +415,7 @@ After successful script execution, you'll see output similar to:
 ✨ Enjoy your new VPN server! ✨
 ```
 
-## 🤝 Contributing
+<h2 id="contributing">🤝 Contributing</h2>
 
 Your contributions to improve this project are highly valued!
 
@@ -436,7 +435,7 @@ Please report issues in the Issues section and include the following information
 - Complete error output
 - Steps to reproduce the issue
 
-## 📄 License
+<h2 id="license">📄 License</h2>
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
 
