@@ -1009,7 +1009,12 @@ display_final_config() {
     if [[ $CHANGE_SSH_PORT == "yes" ]]; then
         print_colored $YELLOW "🚪 SSH Port Changed:"
         print_colored $WHITE "   New SSH port: $NEW_SSH_PORT"
-        print_colored $WHITE "   Use: ssh user@$SERVER_IP -p $NEW_SSH_PORT"
+        # Determine the correct username to display
+        local ssh_username="root"
+        if [[ $DISABLE_ROOT_SSH == "yes" ]]; then
+            ssh_username="$NEW_ADMIN_USER"
+        fi
+        print_colored $WHITE "   Use: ssh $ssh_username@$SERVER_IP -p $NEW_SSH_PORT"
         echo ""
     fi
     
