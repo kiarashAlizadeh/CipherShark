@@ -41,13 +41,15 @@ XUI_USERNAME=""
 XUI_PASSWORD=""
 XUI_ACCESS_URL=""
 OUTLINE_API_URL=""
-SSH_VPN_USER=""
-SSH_VPN_PASS=""
 SSH_VPN_UDPGW_PORT=""
 L2TP_PSK=""
 L2TP_USERNAME=""
 L2TP_PASSWORD=""
 SERVER_IP=""
+
+# Array to store multiple SSH VPN users
+declare -a SSH_VPN_USERS=()
+declare -a SSH_VPN_PASSWORDS=()
 
 # Function to print colored output
 print_colored() {
@@ -168,6 +170,83 @@ get_server_ip() {
     fi
 }
 
+# Function to collect SSH VPN users
+collect_ssh_vpn_users() {
+    local user_counter=1
+    local temp_username
+    local temp_password
+    
+    print_info "Now collecting SSH VPN user information..."
+    print_info "All users will share the same UDPGW port for efficiency"
+    
+    while true; do
+        print_colored $CYAN "📋 Creating SSH VPN User #$user_counter"
+        
+        # Get username and validate it's not empty and doesn't already exist
+        while true; do
+            get_input "Enter username for SSH VPN user #$user_counter:" "temp_username" "false"
+            
+            if [[ -z "$temp_username" ]]; then
+                print_error "Username cannot be empty. Please enter a valid username."
+                continue
+            fi
+            
+            # Check if username already exists in our array
+            local username_exists=false
+            for existing_user in "${SSH_VPN_USERS[@]}"; do
+                if [[ "$existing_user" == "$temp_username" ]]; then
+                    username_exists=true
+                    break
+                fi
+            done
+            
+            # Check if username already exists on system
+            if id "$temp_username" &>/dev/null; then
+                print_error "Username '$temp_username' already exists on the system. Please choose a different username."
+                continue
+            fi
+            
+            if [[ "$username_exists" == "true" ]]; then
+                print_error "Username '$temp_username' is already in your SSH VPN user list. Please choose a different username."
+                continue
+            fi
+            
+            break
+        done
+        
+        # Get password
+        while true; do
+            get_input "Enter password for SSH VPN user '$temp_username':" "temp_password" "true"
+            if [[ -z "$temp_password" ]]; then
+                print_error "Password cannot be empty. Please enter a valid password."
+                continue
+            fi
+            break
+        done
+        
+        # Add to arrays
+        SSH_VPN_USERS+=("$temp_username")
+        SSH_VPN_PASSWORDS+=("$temp_password")
+        
+        print_success "SSH VPN user '$temp_username' added to the list"
+        
+        # Ask if they want to add more users
+        if ask_yes_no "Do you want to add another SSH VPN user?"; then
+            ((user_counter++))
+        else
+            break
+        fi
+    done
+    
+    print_success "Total SSH VPN users to be created: ${#SSH_VPN_USERS[@]}"
+    
+    # Show summary
+    print_info "SSH VPN Users Summary:"
+    for i in "${!SSH_VPN_USERS[@]}"; do
+        print_colored $WHITE "   User $((i+1)): ${SSH_VPN_USERS[i]}"
+    done
+}
+
 # Function to collect all user preferences
 collect_user_preferences() {
     print_header "Initial Configuration Questions"
@@ -221,12 +300,12 @@ collect_user_preferences() {
         INSTALL_OUTLINE="yes"
     fi
     
-    if ask_yes_no "Do you want to setup SSH VPN user account?"; then
+    if ask_yes_no "Do you want to setup SSH VPN user accounts?"; then
         SETUP_SSH_VPN="yes"
-        get_input "Enter username for SSH VPN:" "SSH_VPN_USER" "false"
-        get_input "Enter password for SSH VPN:" "SSH_VPN_PASS" "true"
+        
+        # Get UDPGW port (shared for all users)
         while true; do
-            get_input "Enter UDPGW port for SSH VPN (avoid default 7300):" "SSH_VPN_UDPGW_PORT" "false"
+            get_input "Enter UDPGW port for SSH VPN (avoid default 7300, this port will be shared by all SSH VPN users):" "SSH_VPN_UDPGW_PORT" "false"
             if validate_port "$SSH_VPN_UDPGW_PORT"; then
                 if [[ $SSH_VPN_UDPGW_PORT != "7300" ]]; then
                     break
@@ -237,6 +316,9 @@ collect_user_preferences() {
                 print_error "Invalid port number. Please enter a number between 1-65535."
             fi
         done
+        
+        # Collect multiple SSH VPN users
+        collect_ssh_vpn_users
     fi
     
     if ask_yes_no "Do you want to install L2TP/IPSec VPN?"; then
@@ -344,7 +426,7 @@ setup_firewall_rules() {
         
         if [[ $SETUP_SSH_VPN == "yes" ]]; then
             ufw allow "$SSH_VPN_UDPGW_PORT"/udp comment 'SSH VPN UDPGW'
-            print_info "Opened port $SSH_VPN_UDPGW_PORT for SSH VPN UDPGW"
+            print_info "Opened port $SSH_VPN_UDPGW_PORT for SSH VPN UDPGW (shared by all SSH VPN users)"
         fi
         
         if [[ $INSTALL_L2TP == "yes" ]]; then
@@ -472,26 +554,14 @@ install_outline_vpn() {
     fi
 }
 
-# Function to create SSH VPN user
-create_ssh_vpn_user() {
+# Function to create SSH VPN users
+create_ssh_vpn_users() {
     if [[ $SETUP_SSH_VPN == "yes" ]]; then
-        print_header "Setting up SSH VPN User"
+        print_header "Setting up SSH VPN Users"
         
-        print_info "Creating SSH VPN user: $SSH_VPN_USER"
+        # Configure SSH for port forwarding first (only once)
+        print_info "Configuring SSH for VPN support..."
         
-        # Create user and configure
-        sudo adduser --gecos "" "$SSH_VPN_USER" << EOF
-$SSH_VPN_PASS
-$SSH_VPN_PASS
-
-
-
-
-y
-EOF
-        
-        # Configure user for VPN only
-        sudo usermod -s /usr/sbin/nologin "$SSH_VPN_USER"
         sudo mkdir -p /run/sshd
         sudo chmod 755 /run/sshd
         
@@ -504,17 +574,52 @@ EOF
             echo 'X11Forwarding no' | sudo tee -a /etc/ssh/sshd_config > /dev/null
         fi
         
-        # Remove existing Match User section if present
-        sudo sed -i "/^Match User $SSH_VPN_USER/,/^$/d" /etc/ssh/sshd_config
+        # Create each SSH VPN user
+        local created_users=0
+        for i in "${!SSH_VPN_USERS[@]}"; do
+            local username="${SSH_VPN_USERS[i]}"
+            local password="${SSH_VPN_PASSWORDS[i]}"
+            
+            print_info "Creating SSH VPN user $((i+1)): $username"
+            
+            # Create user and configure
+            if sudo adduser --gecos "" "$username" << EOF
+$password
+$password
+
+
+
+
+y
+EOF
+            then
+                # Configure user for VPN only
+                sudo usermod -s /usr/sbin/nologin "$username"
+                
+                # Remove existing Match User section for this specific user if present
+                sudo sed -i "/^Match User $username/,/^$/d" /etc/ssh/sshd_config
+                
+                # Add restricted access for this VPN user
+                echo -e "\nMatch User $username\n    ForceCommand echo 'SSH VPN user $username - Restricted to port forwarding only.'" | sudo tee -a /etc/ssh/sshd_config > /dev/null
+                
+                print_success "SSH VPN user '$username' created and configured"
+                ((created_users++))
+            else
+                print_error "Failed to create SSH VPN user '$username'"
+            fi
+        done
         
-        # Add restricted access for VPN user
-        echo -e "\nMatch User $SSH_VPN_USER\n    ForceCommand echo 'Restricted to port forwarding only.'" | sudo tee -a /etc/ssh/sshd_config > /dev/null
-        
-        # Test and restart SSH
-        sudo sshd -t
-        sudo systemctl restart ssh
-        
-        print_success "SSH VPN user created and configured"
+        # Test and restart SSH (only once at the end)
+        if [[ $created_users -gt 0 ]]; then
+            print_info "Testing SSH configuration..."
+            if sudo sshd -t; then
+                sudo systemctl restart ssh
+                print_success "SSH service restarted successfully"
+                print_success "Total SSH VPN users created: $created_users"
+            else
+                print_error "SSH configuration test failed. Please check the configuration manually."
+            fi
+        fi
     fi
 }
 
@@ -659,7 +764,7 @@ display_final_config() {
         echo ""
     fi
     
-    if [[ $SETUP_SSH_VPN == "yes" ]]; then
+    if [[ $SETUP_SSH_VPN == "yes" && ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
         print_colored $PURPLE "🌐 SSH VPN Information:"
         print_colored $WHITE "   Server IP: $SERVER_IP"
         if [[ $CHANGE_SSH_PORT == "yes" ]]; then
@@ -668,8 +773,18 @@ display_final_config() {
             print_colored $WHITE "   SSH Port: 22"
         fi
         print_colored $WHITE "   UDPGW Port: $SSH_VPN_UDPGW_PORT"
-        print_colored $WHITE "   Username: $SSH_VPN_USER"
-        print_colored $WHITE "   Password: $SSH_VPN_PASS"
+        print_colored $WHITE "   Total Users Created: ${#SSH_VPN_USERS[@]}"
+        echo ""
+        
+        # Display each SSH VPN user with counter
+        for i in "${!SSH_VPN_USERS[@]}"; do
+            print_colored $CYAN "   📋 SSH VPN USER $((i+1)):"
+            print_colored $WHITE "      Username: ${SSH_VPN_USERS[i]}"
+            print_colored $WHITE "      Password: ${SSH_VPN_PASSWORDS[i]}"
+            if [[ $i -lt $((${#SSH_VPN_USERS[@]} - 1)) ]]; then
+                echo ""
+            fi
+        done
         echo ""
     fi
     
@@ -706,6 +821,9 @@ display_final_config() {
         if [[ $SETUP_SSH_VPN == "yes" ]]; then
             firewall_ports="$firewall_ports, $SSH_VPN_UDPGW_PORT (UDPGW)"
         fi
+        if [[ $INSTALL_L2TP == "yes" ]]; then
+            firewall_ports="$firewall_ports, 500/4500/1701 (L2TP)"
+        fi
         print_colored $WHITE "   Allowed ports: $firewall_ports"
         echo ""
     fi
@@ -714,6 +832,10 @@ display_final_config() {
     print_colored $WHITE "   1. Save this configuration information"
     print_colored $WHITE "   2. Test all connections before closing this terminal"
     print_colored $WHITE "   3. Configure your VPN clients with the provided information"
+    if [[ $SETUP_SSH_VPN == "yes" && ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+        print_colored $WHITE "   4. Multiple SSH VPN users can connect simultaneously using the same ports"
+        print_colored $WHITE "   5. Each SSH VPN user will have their own isolated session"
+    fi
     echo ""
     
     if [[ $REBOOT_SERVER == "yes" ]]; then
@@ -769,7 +891,7 @@ main() {
     setup_firewall_rules
     install_3x_ui
     install_outline_vpn
-    create_ssh_vpn_user
+    create_ssh_vpn_users
     install_l2tp_vpn
     
     # Display final configuration
