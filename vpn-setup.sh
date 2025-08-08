@@ -42,6 +42,7 @@ RUN_SPEED_TEST=""
 XUI_USERNAME=""
 XUI_PASSWORD=""
 XUI_ACCESS_URL=""
+XUI_PANEL_PORT=""
 OUTLINE_API_URL=""
 OUTLINE_MANAGEMENT_PORT=""
 OUTLINE_ACCESS_PORT=""
@@ -299,6 +300,11 @@ load_config_file() {
             NEW_ADMIN_PASS=$NEW_ADMIN_PASSWORD
         fi
         
+        # Set 3X-UI panel port from config if available
+        if [[ -n "$XUI_PANEL_PORT" ]]; then
+            print_info "3X-UI panel port set from config: $XUI_PANEL_PORT"
+        fi
+        
         return 0
     else
         print_error "Failed to load configuration file!"
@@ -396,6 +402,19 @@ collect_user_preferences() {
         INSTALL_3XUI="yes"
         get_input "Enter username for 3X-UI panel:" "XUI_USERNAME" "false"
         get_input "Enter password for 3X-UI panel:" "XUI_PASSWORD" "true"
+        
+        # Get panel port from user
+        while true; do
+            get_input "Enter panel port for 3X-UI (default is 2087):" "XUI_PANEL_PORT" "false"
+            if [[ -z "$XUI_PANEL_PORT" ]]; then
+                XUI_PANEL_PORT="2087"
+                break
+            elif validate_port "$XUI_PANEL_PORT"; then
+                break
+            else
+                print_error "Invalid port number. Please enter a number between 1-65535."
+            fi
+        done
     fi
     
     if ask_yes_no "Do you want to install Outline VPN?"; then
@@ -522,8 +541,8 @@ setup_firewall_rules() {
         
         # Allow VPN ports if services will be installed
         if [[ $INSTALL_3XUI == "yes" ]]; then
-            ufw allow 2087/tcp comment '3X-UI Panel'
-            print_info "Opened port 2087 for 3X-UI Panel"
+            ufw allow "$XUI_PANEL_PORT"/tcp comment '3X-UI Panel'
+            print_info "Opened port $XUI_PANEL_PORT for 3X-UI Panel"
         fi
         
         if [[ $INSTALL_OUTLINE == "yes" ]]; then
@@ -573,7 +592,7 @@ install_3x_ui() {
         # Capture 3X-UI installation output
         bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) << EOF > /tmp/3xui_install.txt 2>&1
 y
-2087
+$XUI_PANEL_PORT
 EOF
         
         # Display the installation output
@@ -595,7 +614,7 @@ EOF
                 print_info "Converted IPv6 to IPv4 URL: $XUI_ACCESS_URL"
             fi
         else
-            XUI_ACCESS_URL="http://$SERVER_IP:2087"
+            XUI_ACCESS_URL="http://$SERVER_IP:$XUI_PANEL_PORT"
             print_warning "Could not extract Access URL from output, using default: $XUI_ACCESS_URL"
         fi
         
@@ -998,7 +1017,7 @@ display_final_config() {
         print_colored $GREEN "🔥 Firewall Status: ENABLED"
         local firewall_ports="$FIREWALL_SSH_PORT (SSH), 80 (HTTP), 443 (HTTPS)"
         if [[ $INSTALL_3XUI == "yes" ]]; then
-            firewall_ports="$firewall_ports, 2087 (3X-UI)"
+            firewall_ports="$firewall_ports, $XUI_PANEL_PORT (3X-UI)"
         fi
         if [[ $INSTALL_OUTLINE == "yes" ]]; then
             if [[ -n "$OUTLINE_MANAGEMENT_PORT" ]] && [[ -n "$OUTLINE_ACCESS_PORT" ]]; then
