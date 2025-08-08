@@ -35,17 +35,21 @@ NEW_SSH_PORT=""
 SETUP_FIREWALL=""
 FIREWALL_SSH_PORT=""
 REBOOT_SERVER=""
+RUN_SPEED_TEST=""
 
 # VPN configuration variables
 XUI_USERNAME=""
 XUI_PASSWORD=""
 XUI_ACCESS_URL=""
 OUTLINE_API_URL=""
+OUTLINE_MANAGEMENT_PORT=""
+OUTLINE_ACCESS_PORT=""
 SSH_VPN_UDPGW_PORT=""
 L2TP_PSK=""
 L2TP_USERNAME=""
 L2TP_PASSWORD=""
 SERVER_IP=""
+SPEED_TEST_RESULTS=""
 
 # Array to store multiple SSH VPN users
 declare -a SSH_VPN_USERS=()
@@ -328,6 +332,12 @@ collect_user_preferences() {
         get_input "Enter password for L2TP VPN:" "L2TP_PASSWORD" "true"
     fi
     
+    # Ask about speed test
+    print_header "Performance Testing"
+    if ask_yes_no "Do you want to run a speed test after installation?"; then
+        RUN_SPEED_TEST="yes"
+    fi
+    
     # Final question about server reboot
     print_header "Final Configuration"
     if ask_yes_no "Do you want to reboot the server after installation completes?"; then
@@ -421,7 +431,7 @@ setup_firewall_rules() {
         if [[ $INSTALL_OUTLINE == "yes" ]]; then
             ufw allow 443/tcp comment 'Outline VPN'
             ufw allow 443/udp comment 'Outline VPN UDP'
-            # Outline uses random high ports, we'll add them after installation
+            print_info "Pre-opened common Outline ports (specific ports will be added after installation)"
         fi
         
         if [[ $SETUP_SSH_VPN == "yes" ]]; then
@@ -529,21 +539,38 @@ install_outline_vpn() {
         # Display installation output
         cat /tmp/outline_output.txt
         
-        # Try to extract API URL from output
+        # Try to extract API URL and ports from output
         if grep -q "apiUrl" /tmp/outline_output.txt; then
             OUTLINE_API_URL=$(grep -o '{"apiUrl":"[^"]*","certSha256":"[^"]*"}' /tmp/outline_output.txt | head -1)
-            print_success "Outline VPN installation completed"
-            print_info "API configuration captured for final display"
             
-            # Extract and open firewall port for Outline
-            if [[ $SETUP_FIREWALL == "yes" ]] && grep -q "Access key port" /tmp/outline_output.txt; then
-                OUTLINE_PORT=$(grep "Access key port" /tmp/outline_output.txt | grep -o '[0-9]\+' | head -1)
-                if [[ -n "$OUTLINE_PORT" ]]; then
-                    ufw allow "$OUTLINE_PORT"/tcp comment 'Outline VPN Access'
-                    ufw allow "$OUTLINE_PORT"/udp comment 'Outline VPN Access'
-                    print_info "Opened port $OUTLINE_PORT for Outline VPN"
+            # Extract Management port from API URL
+            if [[ -n "$OUTLINE_API_URL" ]]; then
+                OUTLINE_MANAGEMENT_PORT=$(echo "$OUTLINE_API_URL" | grep -o ':[0-9]\+/' | sed 's/[:/]//g')
+                print_info "Extracted Management port: $OUTLINE_MANAGEMENT_PORT"
+            fi
+            
+            # Extract Access key port from output text
+            if grep -q "Access key port" /tmp/outline_output.txt; then
+                OUTLINE_ACCESS_PORT=$(grep "Access key port" /tmp/outline_output.txt | grep -o '[0-9]\+' | head -1)
+                print_info "Extracted Access key port: $OUTLINE_ACCESS_PORT"
+            fi
+            
+            # Open firewall ports for Outline if firewall is enabled
+            if [[ $SETUP_FIREWALL == "yes" ]]; then
+                if [[ -n "$OUTLINE_MANAGEMENT_PORT" ]]; then
+                    ufw allow "$OUTLINE_MANAGEMENT_PORT"/tcp comment 'Outline Management'
+                    print_info "Opened port $OUTLINE_MANAGEMENT_PORT for Outline Management"
+                fi
+                
+                if [[ -n "$OUTLINE_ACCESS_PORT" ]]; then
+                    ufw allow "$OUTLINE_ACCESS_PORT"/tcp comment 'Outline Access'
+                    ufw allow "$OUTLINE_ACCESS_PORT"/udp comment 'Outline Access'
+                    print_info "Opened port $OUTLINE_ACCESS_PORT for Outline Access (TCP and UDP)"
                 fi
             fi
+            
+            print_success "Outline VPN installation completed"
+            print_info "API configuration captured for final display"
         else
             print_success "Outline VPN installation completed"
             print_warning "Please check the output above for API URL and certificate information"
@@ -562,16 +589,16 @@ create_ssh_vpn_users() {
         # Configure SSH for port forwarding first (only once)
         print_info "Configuring SSH for VPN support..."
         
-        sudo mkdir -p /run/sshd
-        sudo chmod 755 /run/sshd
+        mkdir -p /run/sshd
+        chmod 755 /run/sshd
         
         # Configure SSH for port forwarding
         if ! grep -q '^AllowTcpForwarding yes' /etc/ssh/sshd_config; then
-            echo 'AllowTcpForwarding yes' | sudo tee -a /etc/ssh/sshd_config > /dev/null
+            echo 'AllowTcpForwarding yes' >> /etc/ssh/sshd_config
         fi
         
         if ! grep -q '^X11Forwarding no' /etc/ssh/sshd_config; then
-            echo 'X11Forwarding no' | sudo tee -a /etc/ssh/sshd_config > /dev/null
+            echo 'X11Forwarding no' >> /etc/ssh/sshd_config
         fi
         
         # Create each SSH VPN user
@@ -582,25 +609,19 @@ create_ssh_vpn_users() {
             
             print_info "Creating SSH VPN user $((i+1)): $username"
             
-            # Create user and configure
-            if sudo adduser --gecos "" "$username" << EOF
-$password
-$password
-
-
-
-
-y
-EOF
-            then
+            # Create user with expect to handle interactive prompts
+            if adduser --gecos "$username" --disabled-password "$username"; then
+                # Set password using chpasswd
+                echo "$username:$password" | chpasswd
+                
                 # Configure user for VPN only
-                sudo usermod -s /usr/sbin/nologin "$username"
+                usermod -s /usr/sbin/nologin "$username"
                 
                 # Remove existing Match User section for this specific user if present
-                sudo sed -i "/^Match User $username/,/^$/d" /etc/ssh/sshd_config
+                sed -i "/^Match User $username/,/^$/d" /etc/ssh/sshd_config
                 
                 # Add restricted access for this VPN user
-                echo -e "\nMatch User $username\n    ForceCommand echo 'SSH VPN user $username - Restricted to port forwarding only.'" | sudo tee -a /etc/ssh/sshd_config > /dev/null
+                echo -e "\nMatch User $username\n    ForceCommand echo 'SSH VPN user $username - Restricted to port forwarding only.'" >> /etc/ssh/sshd_config
                 
                 print_success "SSH VPN user '$username' created and configured"
                 ((created_users++))
@@ -612,8 +633,8 @@ EOF
         # Test and restart SSH (only once at the end)
         if [[ $created_users -gt 0 ]]; then
             print_info "Testing SSH configuration..."
-            if sudo sshd -t; then
-                sudo systemctl restart ssh
+            if sshd -t; then
+                systemctl restart ssh
                 print_success "SSH service restarted successfully"
                 print_success "Total SSH VPN users created: $created_users"
             else
@@ -737,6 +758,54 @@ EOF
     fi
 }
 
+# Function to install and run Speedtest
+run_speed_test() {
+    if [[ $RUN_SPEED_TEST == "yes" ]]; then
+        print_header "Running Speed Test"
+        
+        print_info "Installing Speedtest CLI..."
+        
+        # Install speedtest-cli using official method
+        curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash
+        apt update
+        apt install -y speedtest
+        
+        print_info "Running speed test... This may take a few moments."
+        print_warning "Please wait while we test your server's internet connection speed."
+        
+        # Run speedtest and capture output
+        if speedtest --accept-license --accept-gdpr > /tmp/speedtest_result.txt 2>&1; then
+            # Display results
+            print_success "Speed test completed!"
+            
+            # Extract key metrics from speedtest output
+            local download_speed=$(grep -i "Download:" /tmp/speedtest_result.txt | awk '{print $2" "$3}' || echo "N/A")
+            local upload_speed=$(grep -i "Upload:" /tmp/speedtest_result.txt | awk '{print $2" "$3}' || echo "N/A")
+            local ping=$(grep -i "Idle Latency:" /tmp/speedtest_result.txt | awk '{print $3" "$4}' || echo "N/A")
+            local server_info=$(grep -i "Server:" /tmp/speedtest_result.txt | cut -d':' -f2- | xargs || echo "N/A")
+            
+            # Store results for final display
+            SPEED_TEST_RESULTS="Download: $download_speed | Upload: $upload_speed | Ping: $ping | Server: $server_info"
+            
+            print_info "Speed Test Results:"
+            print_colored $WHITE "   Download Speed: $download_speed"
+            print_colored $WHITE "   Upload Speed: $upload_speed"
+            print_colored $WHITE "   Ping: $ping"
+            print_colored $WHITE "   Test Server: $server_info"
+            
+            # Show full output if needed
+            print_info "Full speed test output saved for reference"
+            
+        else
+            print_error "Speed test failed. Network connectivity issues may exist."
+            SPEED_TEST_RESULTS="Speed test failed - please check network connectivity"
+        fi
+        
+        # Clean up
+        rm -f /tmp/speedtest_result.txt
+    fi
+}
+
 # Function to display final configuration
 display_final_config() {
     print_header "Installation Complete! 🎉"
@@ -755,7 +824,12 @@ display_final_config() {
     if [[ $INSTALL_OUTLINE == "yes" ]]; then
         print_colored $PURPLE "🔒 Outline VPN Information:"
         print_colored $WHITE "   Server IP: $SERVER_IP"
-        print_colored $WHITE "   Port: 443"
+        if [[ -n "$OUTLINE_MANAGEMENT_PORT" ]]; then
+            print_colored $WHITE "   Management Port: $OUTLINE_MANAGEMENT_PORT (TCP)"
+        fi
+        if [[ -n "$OUTLINE_ACCESS_PORT" ]]; then
+            print_colored $WHITE "   Access Key Port: $OUTLINE_ACCESS_PORT (TCP & UDP)"
+        fi
         if [[ -n "$OUTLINE_API_URL" ]]; then
             print_colored $WHITE "   API Config: $OUTLINE_API_URL"
         else
@@ -797,6 +871,12 @@ display_final_config() {
         echo ""
     fi
     
+    if [[ $RUN_SPEED_TEST == "yes" && -n "$SPEED_TEST_RESULTS" ]]; then
+        print_colored $GREEN "🚀 Server Speed Test Results:"
+        print_colored $WHITE "   $SPEED_TEST_RESULTS"
+        echo ""
+    fi
+    
     if [[ $DISABLE_ROOT_SSH == "yes" ]]; then
         print_colored $YELLOW "🔒 Security Notice:"
         print_colored $WHITE "   Root SSH access has been disabled"
@@ -818,6 +898,13 @@ display_final_config() {
         if [[ $INSTALL_3XUI == "yes" ]]; then
             firewall_ports="$firewall_ports, 2087 (3X-UI)"
         fi
+        if [[ $INSTALL_OUTLINE == "yes" ]]; then
+            if [[ -n "$OUTLINE_MANAGEMENT_PORT" ]] && [[ -n "$OUTLINE_ACCESS_PORT" ]]; then
+                firewall_ports="$firewall_ports, $OUTLINE_MANAGEMENT_PORT (Outline Mgmt), $OUTLINE_ACCESS_PORT (Outline Access)"
+            else
+                firewall_ports="$firewall_ports, Outline ports"
+            fi
+        fi
         if [[ $SETUP_SSH_VPN == "yes" ]]; then
             firewall_ports="$firewall_ports, $SSH_VPN_UDPGW_PORT (UDPGW)"
         fi
@@ -835,6 +922,9 @@ display_final_config() {
     if [[ $SETUP_SSH_VPN == "yes" && ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
         print_colored $WHITE "   4. Multiple SSH VPN users can connect simultaneously using the same ports"
         print_colored $WHITE "   5. Each SSH VPN user will have their own isolated session"
+    fi
+    if [[ $INSTALL_OUTLINE == "yes" ]]; then
+        print_colored $WHITE "   6. Use Outline Manager app to import the API config and create access keys"
     fi
     echo ""
     
@@ -893,6 +983,9 @@ main() {
     install_outline_vpn
     create_ssh_vpn_users
     install_l2tp_vpn
+    
+    # Run speed test if requested
+    run_speed_test
     
     # Display final configuration
     display_final_config
