@@ -101,7 +101,8 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 
 ```bash
 # Download the script
-wget https://raw.githubusercontent.com/kiarashAlizadeh/CipherShark/main/vpn-setup.sh
+wget https://raw.githubusercontent.com/kiarashAlizadeh/CipherShark/master/vpn-setup.sh
+# curl -O 
 
 # Make executable
 chmod +x vpn-setup.sh
