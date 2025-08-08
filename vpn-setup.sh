@@ -140,6 +140,8 @@ get_server_ip() {
     # Try multiple methods to get external IPv4
     SERVER_IP=""
     
+    print_info "Detecting server's public IPv4 address..."
+    
     # Method 1: ifconfig.co with IPv4 force
     SERVER_IP=$(curl -s --connect-timeout 10 -4 ifconfig.co 2>/dev/null | grep -oE "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" || echo "")
     
@@ -153,12 +155,17 @@ get_server_ip() {
         SERVER_IP=$(curl -s --connect-timeout 10 ipv4.icanhazip.com 2>/dev/null | grep -oE "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" || echo "")
     fi
     
-    # Method 4: hostname -I and filter IPv4 as fallback
+    # Method 4: dig command as additional fallback
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null | grep -oE "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" || echo "")
+    fi
+    
+    # Method 5: hostname -I and filter IPv4 as fallback
     if [[ -z "$SERVER_IP" ]]; then
         SERVER_IP=$(hostname -I | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" | head -1 2>/dev/null || echo "")
     fi
     
-    # Method 5: ip route get to find the primary IPv4
+    # Method 6: ip route get to find the primary IPv4
     if [[ -z "$SERVER_IP" ]]; then
         SERVER_IP=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K[0-9.]+' || echo "")
     fi
@@ -169,10 +176,16 @@ get_server_ip() {
        [[ ! $SERVER_IP =~ ^10\. ]] && 
        [[ ! $SERVER_IP =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] &&
        [[ ! $SERVER_IP =~ ^127\. ]]; then
-        print_info "Server IPv4 detected: $SERVER_IP"
+        print_success "Server IPv4 detected: $SERVER_IP"
     else
-        SERVER_IP="YOUR_SERVER_IP"
-        print_warning "Could not detect public IPv4 address. Please replace YOUR_SERVER_IP manually."
+        # If we still don't have a valid IP, try to get it from the config file
+        if [[ -n "$SERVER_IP_FROM_CONFIG" && "$SERVER_IP_FROM_CONFIG" != "" ]]; then
+            SERVER_IP="$SERVER_IP_FROM_CONFIG"
+            print_info "Using server IP from config file: $SERVER_IP"
+        else
+            SERVER_IP="YOUR_SERVER_IP"
+            print_warning "Could not detect public IPv4 address. Please replace YOUR_SERVER_IP manually."
+        fi
     fi
 }
 
@@ -253,132 +266,113 @@ collect_ssh_vpn_users() {
     done
 }
 
-# Function to load configuration from file
+# Load configuration from a config file
 load_config_file() {
-    local config_file=$1
-    
-    if [[ ! -f "$config_file" ]]; then
-        print_error "Configuration file '$config_file' not found!"
-        return 1
+  local config_file="$1"
+
+  # Disable history expansion so '!' in passwords won't break
+  set +H
+
+  if [[ -f "$config_file" ]]; then
+    echo "Loading configuration from $config_file..."
+
+    # Source the config file directly to keep original formatting
+    source "$config_file"
+
+    # Map config file variables to script variables
+    if [[ -n "$CHANGE_ROOT_PASSWORD" ]]; then
+        CHANGE_PASSWORD="$CHANGE_ROOT_PASSWORD"
+        NEW_PASSWORD="$NEW_ROOT_PASSWORD"
     fi
     
-    print_info "Loading configuration from '$config_file'..."
+    if [[ -n "$NEW_ADMIN_USER" ]]; then
+        NEW_ADMIN_USER="$NEW_ADMIN_USER"
+        NEW_ADMIN_PASS="$NEW_ADMIN_PASSWORD"
+    fi
     
-    # Read and parse the configuration file manually to avoid issues with special characters
-    print_info "Reading configuration file..."
+    if [[ -n "$CHANGE_SSH_PORT" ]]; then
+        CHANGE_SSH_PORT="$CHANGE_SSH_PORT"
+    fi
     
-    # Read the file line by line and set variables
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip comments and empty lines
-        if [[ $line =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
-            continue
-        fi
+    if [[ -n "$NEW_SSH_PORT" ]]; then
+        NEW_SSH_PORT="$NEW_SSH_PORT"
+        CHANGE_SSH_PORT="yes"
+    fi
+    
+    # Set firewall SSH port if SSH port is changed
+    if [[ $CHANGE_SSH_PORT == "yes" ]]; then
+        FIREWALL_SSH_PORT="$NEW_SSH_PORT"
+    else
+        FIREWALL_SSH_PORT="22"
+    fi
+    
+    # Load firewall setting from config
+    if [[ -n "$SETUP_FIREWALL" ]]; then
+        SETUP_FIREWALL="$SETUP_FIREWALL"
+    fi
+    
+    if [[ -n "$XUI_USERNAME" ]]; then
+        XUI_USERNAME="$XUI_USERNAME"
+        XUI_PASSWORD="$XUI_PASSWORD"
+        XUI_PANEL_PORT="$XUI_PANEL_PORT"
+    fi
+    
+    if [[ -n "$SSH_VPN_UDPGW_PORT" ]]; then
+        SSH_VPN_UDPGW_PORT="$SSH_VPN_UDPGW_PORT"
+    fi
+    
+    if [[ -n "$L2TP_PSK" ]]; then
+        L2TP_PSK="$L2TP_PSK"
+        L2TP_USERNAME="$L2TP_USERNAME"
+        L2TP_PASSWORD="$L2TP_PASSWORD"
+    fi
+    
+    # Process SSH VPN users from config file
+    if [[ -n "$SSH_VPN_USERS" && ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+        # Store the original array from config file before clearing
+        local config_ssh_users=("${SSH_VPN_USERS[@]}")
         
-        # Skip array declarations (we'll handle them separately)
-        if [[ $line =~ ^[[:space:]]*[A-Z_]+=\( ]]; then
-            continue
-        fi
-        
-        # Handle variable assignments
-        if [[ $line =~ ^[[:space:]]*([A-Z_]+)=(.*)$ ]]; then
-            local var_name="${BASH_REMATCH[1]}"
-            local var_value="${BASH_REMATCH[2]}"
-            
-            # Remove quotes if present
-            var_value="${var_value%\"}"
-            var_value="${var_value#\"}"
-            var_value="${var_value%\'}"
-            var_value="${var_value#\'}"
-            
-            # Set the variable
-            eval "$var_name='$var_value'"
-        fi
-    done < "$config_file"
-    
-    # Handle SSH_VPN_USERS array specifically
-    if [[ -f "$config_file" ]]; then
-        # Extract SSH_VPN_USERS array from the file
+        # Clear the global arrays to rebuild them
         SSH_VPN_USERS=()
         SSH_VPN_PASSWORDS=()
         
-        # Read the file and extract user entries
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            # Look for lines with username:password format
-            if [[ $line =~ ^[[:space:]]*\"([^:]+):([^\"]+)\" ]]; then
-                local username="${BASH_REMATCH[1]}"
-                local password="${BASH_REMATCH[2]}"
+        # Process each user entry from the config
+        for user_entry in "${config_ssh_users[@]}"; do
+            # Split username:password format
+            local username=$(echo "$user_entry" | cut -d':' -f1)
+            local password=$(echo "$user_entry" | cut -d':' -f2)
+            
+            if [[ -n "$username" && -n "$password" ]]; then
                 SSH_VPN_USERS+=("$username")
                 SSH_VPN_PASSWORDS+=("$password")
-                print_info "Found SSH VPN user: $username"
             fi
-        done < "$config_file"
+        done
+        
+        print_info "Loaded ${#SSH_VPN_USERS[@]} SSH VPN users from config file"
+    else
+        print_warning "No SSH VPN users found in configuration"
     fi
     
-    print_success "Configuration loaded successfully!"
-        
-        # Handle SERVER_IP - if empty or not set, auto-detect
-        if [[ -z "$SERVER_IP" ]] || [[ "$SERVER_IP" == "" ]]; then
-            print_info "SERVER_IP not set in config, auto-detecting..."
-            get_server_ip
-        else
-            print_info "Using SERVER_IP from config: $SERVER_IP"
-        fi
-        
-        # Parse SSH VPN users from array if present
-        if [[ ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
-            print_info "Found ${#SSH_VPN_USERS[@]} SSH VPN users in config"
-            SSH_VPN_USERS=()
-            SSH_VPN_PASSWORDS=()
-            
-            for user_entry in "${SSH_VPN_USERS[@]}"; do
-                if [[ $user_entry == *":"* ]]; then
-                    local username=$(echo "$user_entry" | cut -d':' -f1)
-                    local password=$(echo "$user_entry" | cut -d':' -f2)
-                    SSH_VPN_USERS+=("$username")
-                    SSH_VPN_PASSWORDS+=("$password")
-                    print_info "Parsed SSH VPN user: $username"
-                fi
-            done
-        fi
-        
-        # Set firewall SSH port based on configuration
-        if [[ $CHANGE_SSH_PORT == "yes" ]]; then
-            FIREWALL_SSH_PORT=$NEW_SSH_PORT
-        else
-            FIREWALL_SSH_PORT="22"
-        fi
-        
-        # Map configuration variables to script variables
-        if [[ $CHANGE_ROOT_PASSWORD == "yes" ]]; then
-            CHANGE_PASSWORD="yes"
-            NEW_PASSWORD=$NEW_ROOT_PASSWORD
-            print_info "Root password change configured"
-        fi
-        
-        if [[ $DISABLE_ROOT_SSH == "yes" ]]; then
-            NEW_ADMIN_PASS=$NEW_ADMIN_PASSWORD
-            print_info "Admin user configured: $NEW_ADMIN_USER"
-        fi
-        
-        # Set 3X-UI panel port from config if available
-        if [[ -n "$XUI_PANEL_PORT" ]]; then
-            print_info "3X-UI panel port set from config: $XUI_PANEL_PORT"
-        fi
-        
-        # Verify L2TP configuration
-        if [[ $INSTALL_L2TP == "yes" ]]; then
-            if [[ -n "$L2TP_PSK" ]]; then
-                print_info "L2TP PSK configured: ${L2TP_PSK:0:10}..."
-            else
-                print_warning "L2TP PSK not found in config"
-            fi
-            if [[ -n "$L2TP_USERNAME" ]]; then
-                print_info "L2TP username configured: $L2TP_USERNAME"
-            fi
-        fi
-        
-        return 0
+    # Set server IP from config if provided (only if not empty)
+    if [[ -n "$SERVER_IP" && "$SERVER_IP" != "" ]]; then
+        SERVER_IP_FROM_CONFIG="$SERVER_IP"
+        print_info "Server IP from config: $SERVER_IP_FROM_CONFIG"
+    else
+        print_info "No server IP specified in config, will auto-detect"
+    fi
+
+  else
+    echo "❌ Configuration file '$config_file' not found!"
+    exit 1
+  fi
+
+  # Re-enable history expansion after loading
+  set -H
 }
+
+
+
+
 
 # Function to ask for configuration file
 ask_for_config_file() {
@@ -416,18 +410,24 @@ ask_for_config_file() {
 
 # Function to collect all user preferences
 collect_user_preferences() {
-    print_header "Initial Configuration Questions"
     
     # First, try to load configuration file
     if ask_for_config_file; then
         print_success "Using configuration file for automated setup!"
         print_info "All settings will be applied automatically."
+        print_info "Configuration loaded successfully - skipping interactive questions."
+        print_info "All configuration values will be loaded from the config file."
+        print_info "Proceeding with automated installation..."
         sleep 2
         return
     fi
     
+    print_info "No configuration file found or selected."
     print_info "Starting interactive configuration mode..."
+    print_info "You will be asked a series of questions to configure your VPN server."
     sleep 1
+    
+    print_header "Initial Configuration Questions"
     
     # Ask about password change
     if ask_yes_no "Do you want to change the root password?"; then
@@ -558,7 +558,9 @@ setup_security() {
         
         # Create user and set password
         useradd -m -s /bin/bash "$NEW_ADMIN_USER" || true
-        echo -e "$NEW_ADMIN_PASS\n$NEW_ADMIN_PASS" | passwd "$NEW_ADMIN_USER"
+        
+        # Set password using chpasswd for better reliability
+        echo "$NEW_ADMIN_USER:$NEW_ADMIN_PASS" | chpasswd
         
         # Add to sudo group
         usermod -aG sudo "$NEW_ADMIN_USER"
@@ -672,20 +674,14 @@ EOF
         
         # Extract Access URL from installation output - look for the correct pattern
         if grep -q "Access URL:" /tmp/3xui_install.txt; then
-            # Extract the full Access URL including the path
+            # Extract the full Access URL including the path - use the exact URL from output
             XUI_ACCESS_URL=$(grep "Access URL:" /tmp/3xui_install.txt | sed 's/.*Access URL: //' | sed 's/[[:space:]].*//')
             print_info "Found 3X-UI Access URL: $XUI_ACCESS_URL"
             
-            # If the extracted URL contains IPv6, replace with IPv4
-            if [[ $XUI_ACCESS_URL == *"["*"]"* ]] || [[ $XUI_ACCESS_URL == *":"*":"* ]]; then
-                # Extract port and path from the URL
-                PORT_AND_PATH=$(echo "$XUI_ACCESS_URL" | sed 's/.*:\([0-9]\+.*\)/\1/')
-                XUI_ACCESS_URL="http://$SERVER_IP:$PORT_AND_PATH"
-                print_info "Converted IPv6 to IPv4 URL: $XUI_ACCESS_URL"
-            fi
         else
-            XUI_ACCESS_URL="http://$SERVER_IP:$XUI_PANEL_PORT"
-            print_warning "Could not extract Access URL from output, using default: $XUI_ACCESS_URL"
+            print_warning "Could not extract Access URL from 3X-UI installation output"
+            print_info "Please check the installation output above for the correct Access URL"
+            XUI_ACCESS_URL=""
         fi
         
         # Configure 3X-UI with custom credentials
@@ -788,11 +784,25 @@ create_ssh_vpn_users() {
             echo 'X11Forwarding no' >> /etc/ssh/sshd_config
         fi
         
+        # Check if we have SSH VPN users from config file
+        if [[ ${#SSH_VPN_USERS[@]} -eq 0 ]]; then
+            print_warning "No SSH VPN users found in configuration"
+            print_info "SSH VPN users should be defined in the config file as:"
+            print_info "SSH_VPN_USERS=(\"username1:password1\" \"username2:password2\")"
+            return 0
+        fi
+        
         # Create each SSH VPN user
         local created_users=0
         for i in "${!SSH_VPN_USERS[@]}"; do
             local username="${SSH_VPN_USERS[i]}"
             local password="${SSH_VPN_PASSWORDS[i]}"
+            
+            # Validate username and password
+            if [[ -z "$username" || -z "$password" ]]; then
+                print_error "Invalid user entry at index $i: username='$username', password='$password'"
+                continue
+            fi
             
             print_info "Creating SSH VPN user $((i+1)): $username"
             
@@ -1006,7 +1016,11 @@ display_final_config() {
     
     if [[ $INSTALL_3XUI == "yes" ]]; then
         print_colored $PURPLE "📱 3X-UI Panel Information:"
-        print_colored $WHITE "   Access URL: $XUI_ACCESS_URL"
+        if [[ -n "$XUI_ACCESS_URL" ]]; then
+            print_colored $WHITE "   Access URL: $XUI_ACCESS_URL"
+        else
+            print_colored $YELLOW "   ⚠️  Access URL not found - please check installation output above"
+        fi
         print_colored $WHITE "   Username: $XUI_USERNAME"
         print_colored $WHITE "   Password: $XUI_PASSWORD"
         echo ""
@@ -1014,7 +1028,6 @@ display_final_config() {
     
     if [[ $INSTALL_OUTLINE == "yes" ]]; then
         print_colored $PURPLE "🔒 Outline VPN Information:"
-        print_colored $WHITE "   Server IP: $SERVER_IP"
         if [[ -n "$OUTLINE_MANAGEMENT_PORT" ]]; then
             print_colored $WHITE "   Management Port: $OUTLINE_MANAGEMENT_PORT (TCP)"
         fi

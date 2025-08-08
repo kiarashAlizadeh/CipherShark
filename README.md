@@ -33,6 +33,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - **Beautiful Interface**: Colorful and organized output with emojis
 - **Error Handling**: Smart error management and continued installation even if issues occur
 - **Speed Testing**: Automatic internet speed testing
+- **Multiple SSH VPN Users**: Support for creating multiple SSH VPN user accounts
 
 <h2 id="features">🔧 Features</h2>
 
@@ -49,7 +50,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 
 - **3X-UI Panel**: Advanced web management panel for Xray
 - **Outline VPN**: Secure and fast VPN protocol
-- **SSH VPN**: Tunneling through SSH
+- **SSH VPN**: Tunneling through SSH with multiple user support
 - **L2TP/IPSec**: VPN protocol compatible with most devices
 
 ### ⚡ Performance
@@ -67,6 +68,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - Support for various protocols (VMess, VLess, Trojan)
 - Beautiful and user-friendly interface
 - User and traffic management
+- Custom panel port configuration
 
 ### 2. Outline VPN 🔒
 
@@ -74,13 +76,15 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - Management through Outline Manager app
 - Support for multiple simultaneous users
 - Strong encryption
+- Automatic API configuration capture
 
 ### 3. SSH VPN 🌐
 
 - Tunneling through SSH
 - Support for multiple simultaneous users
-- Shared UDPGW port usage
+- Shared UDPGW port usage for efficiency
 - High security
+- Individual user accounts with isolated sessions
 
 ### 4. L2TP/IPSec 🔐
 
@@ -88,6 +92,7 @@ CipherShark is an advanced Bash script that allows you to easily and automatical
 - Support for Windows, macOS, iOS, Android
 - IPSec encryption
 - Simple configuration
+- PSK (Pre-Shared Key) authentication
 
 <h2 id="installation-setup">📦 Installation & Setup</h2>
 
@@ -118,13 +123,14 @@ sudo ./vpn-setup.sh
 - **Repeatability**: Reuse configurations
 - **Easy Management**: Change settings without re-running the script
 - **Documentation**: Record all settings in one file
+- **Multiple SSH VPN Users**: Define multiple users in configuration
 
 ### How to Use
 
 1. Edit the `vpn-config.conf` file
 2. Enter your desired settings
 3. Run the script
-4. If configuration file exists, the script will use it
+4. If configuration file exists, the script will use it automatically
 
 <h2 id="configuration-file-settings">📝 Configuration File Settings</h2>
 
@@ -185,7 +191,7 @@ L2TP_PASSWORD=MySecureL2TPPass123!
 RUN_SPEED_TEST=yes
 
 # Server reboot
-REBOOT_SERVER=no
+REBOOT_SERVER=yes
 ```
 
 <h2 id="sample-configuration-file">📄 Sample Configuration File</h2>
@@ -194,7 +200,7 @@ The `vpn-config.conf` file includes all necessary settings:
 
 ```bash
 # CipherShark VPN Server Configuration File
-# This file contains all settings for automated VPN server setup
+# This file contains all the settings for automated VPN server setup
 # Save this file in the same directory as vpn-setup.sh
 # The script will automatically detect and use this configuration
 
@@ -236,6 +242,7 @@ SETUP_SSH_VPN=yes
 SSH_VPN_UDPGW_PORT=7301
 
 # SSH VPN Users List (format: username:password)
+# Each user should be on a separate line with quotes
 SSH_VPN_USERS=(
     "vpnuser1:MySecureVPNPass1!"
     "vpnuser2:MySecureVPNPass2!"
@@ -256,19 +263,7 @@ L2TP_PASSWORD=MySecureL2TPPass123!
 RUN_SPEED_TEST=yes
 
 # Reboot server after installation
-REBOOT_SERVER=no
-
-# ========================================
-# ADVANCED SETTINGS (Optional)
-# ========================================
-
-# Server IP (leave empty for auto-detection)
-SERVER_IP=
-
-# Custom ports (optional - will use defaults if not specified)
-# XUI_PANEL_PORT=2087
-# OUTLINE_MANAGEMENT_PORT=
-# OUTLINE_ACCESS_PORT=
+REBOOT_SERVER=yes
 
 # ========================================
 # NOTES:
@@ -292,7 +287,7 @@ nano vpn-config.conf
 # 2. Run the script
 sudo ./vpn-setup.sh
 
-# 3. If configuration file exists, the script will use it
+# 3. If configuration file exists, the script will use it automatically
 ```
 
 ### Method 2: Interactive Usage
@@ -301,7 +296,7 @@ sudo ./vpn-setup.sh
 # Run the script without configuration file
 sudo ./vpn-setup.sh
 
-# Answer the script questions
+# Answer the script questions interactively
 ```
 
 ### Execution Steps
@@ -313,7 +308,17 @@ sudo ./vpn-setup.sh
 5. **Security Setup**: Apply security settings
 6. **Summary Display**: Show final information and instructions
 
+### Configuration File Detection
+
+The script automatically detects and uses the configuration file if it exists in the same directory. The script will:
+
+- Ask if you have a configuration file
+- Allow you to specify the filename
+- Load all settings automatically
+- Skip interactive questions when using configuration file
+
 <h2 id="troubleshooting">🔧 Troubleshooting</h2>
+
 ### Issue: Script won't execute
 
 ```bash
@@ -340,6 +345,13 @@ ls -la vpn-config.conf
 ```bash
 # Solution: Update system
 sudo apt update && sudo apt upgrade
+```
+
+### Issue: SSH VPN users not created
+
+```bash
+# Solution: Check configuration file format
+# Ensure SSH_VPN_USERS array is properly formatted
 ```
 
 ## 📊 Sample Output
