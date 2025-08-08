@@ -264,12 +264,69 @@ load_config_file() {
     
     print_info "Loading configuration from '$config_file'..."
     
-    # Source the configuration file
-    if source "$config_file" 2>/dev/null; then
-        print_success "Configuration loaded successfully!"
+    # Read and parse the configuration file manually to avoid issues with special characters
+    print_info "Reading configuration file..."
+    
+    # Read the file line by line and set variables
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip comments and empty lines
+        if [[ $line =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
+            continue
+        fi
+        
+        # Skip array declarations (we'll handle them separately)
+        if [[ $line =~ ^[[:space:]]*[A-Z_]+=\( ]]; then
+            continue
+        fi
+        
+        # Handle variable assignments
+        if [[ $line =~ ^[[:space:]]*([A-Z_]+)=(.*)$ ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local var_value="${BASH_REMATCH[2]}"
+            
+            # Remove quotes if present
+            var_value="${var_value%\"}"
+            var_value="${var_value#\"}"
+            var_value="${var_value%\'}"
+            var_value="${var_value#\'}"
+            
+            # Set the variable
+            eval "$var_name='$var_value'"
+        fi
+    done < "$config_file"
+    
+    # Handle SSH_VPN_USERS array specifically
+    if [[ -f "$config_file" ]]; then
+        # Extract SSH_VPN_USERS array from the file
+        SSH_VPN_USERS=()
+        SSH_VPN_PASSWORDS=()
+        
+        # Read the file and extract user entries
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Look for lines with username:password format
+            if [[ $line =~ ^[[:space:]]*\"([^:]+):([^\"]+)\" ]]; then
+                local username="${BASH_REMATCH[1]}"
+                local password="${BASH_REMATCH[2]}"
+                SSH_VPN_USERS+=("$username")
+                SSH_VPN_PASSWORDS+=("$password")
+                print_info "Found SSH VPN user: $username"
+            fi
+        done < "$config_file"
+    fi
+    
+    print_success "Configuration loaded successfully!"
+        
+        # Handle SERVER_IP - if empty or not set, auto-detect
+        if [[ -z "$SERVER_IP" ]] || [[ "$SERVER_IP" == "" ]]; then
+            print_info "SERVER_IP not set in config, auto-detecting..."
+            get_server_ip
+        else
+            print_info "Using SERVER_IP from config: $SERVER_IP"
+        fi
         
         # Parse SSH VPN users from array if present
         if [[ ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+            print_info "Found ${#SSH_VPN_USERS[@]} SSH VPN users in config"
             SSH_VPN_USERS=()
             SSH_VPN_PASSWORDS=()
             
@@ -279,6 +336,7 @@ load_config_file() {
                     local password=$(echo "$user_entry" | cut -d':' -f2)
                     SSH_VPN_USERS+=("$username")
                     SSH_VPN_PASSWORDS+=("$password")
+                    print_info "Parsed SSH VPN user: $username"
                 fi
             done
         fi
@@ -294,10 +352,12 @@ load_config_file() {
         if [[ $CHANGE_ROOT_PASSWORD == "yes" ]]; then
             CHANGE_PASSWORD="yes"
             NEW_PASSWORD=$NEW_ROOT_PASSWORD
+            print_info "Root password change configured"
         fi
         
         if [[ $DISABLE_ROOT_SSH == "yes" ]]; then
             NEW_ADMIN_PASS=$NEW_ADMIN_PASSWORD
+            print_info "Admin user configured: $NEW_ADMIN_USER"
         fi
         
         # Set 3X-UI panel port from config if available
@@ -305,11 +365,19 @@ load_config_file() {
             print_info "3X-UI panel port set from config: $XUI_PANEL_PORT"
         fi
         
+        # Verify L2TP configuration
+        if [[ $INSTALL_L2TP == "yes" ]]; then
+            if [[ -n "$L2TP_PSK" ]]; then
+                print_info "L2TP PSK configured: ${L2TP_PSK:0:10}..."
+            else
+                print_warning "L2TP PSK not found in config"
+            fi
+            if [[ -n "$L2TP_USERNAME" ]]; then
+                print_info "L2TP username configured: $L2TP_USERNAME"
+            fi
+        fi
+        
         return 0
-    else
-        print_error "Failed to load configuration file!"
-        return 1
-    fi
 }
 
 # Function to ask for configuration file
@@ -959,7 +1027,7 @@ display_final_config() {
         echo ""
     fi
     
-    if [[ $SETUP_SSH_VPN == "yes" && ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+    if [[ $SETUP_SSH_VPN == "yes" ]]; then
         print_colored $PURPLE "🌐 SSH VPN Information:"
         print_colored $WHITE "   Server IP: $SERVER_IP"
         if [[ $CHANGE_SSH_PORT == "yes" ]]; then
@@ -968,18 +1036,24 @@ display_final_config() {
             print_colored $WHITE "   SSH Port: 22"
         fi
         print_colored $WHITE "   UDPGW Port: $SSH_VPN_UDPGW_PORT"
-        print_colored $WHITE "   Total Users Created: ${#SSH_VPN_USERS[@]}"
-        echo ""
         
-        # Display each SSH VPN user with counter
-        for i in "${!SSH_VPN_USERS[@]}"; do
-            print_colored $CYAN "   📋 SSH VPN USER $((i+1)):"
-            print_colored $WHITE "      Username: ${SSH_VPN_USERS[i]}"
-            print_colored $WHITE "      Password: ${SSH_VPN_PASSWORDS[i]}"
-            if [[ $i -lt $((${#SSH_VPN_USERS[@]} - 1)) ]]; then
-                echo ""
-            fi
-        done
+        # Check if we have SSH VPN users (either from config or interactive)
+        if [[ ${#SSH_VPN_USERS[@]} -gt 0 ]]; then
+            print_colored $WHITE "   Total Users Created: ${#SSH_VPN_USERS[@]}"
+            echo ""
+            
+            # Display each SSH VPN user with counter
+            for i in "${!SSH_VPN_USERS[@]}"; do
+                print_colored $CYAN "   📋 SSH VPN USER $((i+1)):"
+                print_colored $WHITE "      Username: ${SSH_VPN_USERS[i]}"
+                print_colored $WHITE "      Password: ${SSH_VPN_PASSWORDS[i]}"
+                if [[ $i -lt $((${#SSH_VPN_USERS[@]} - 1)) ]]; then
+                    echo ""
+                fi
+            done
+        else
+            print_colored $YELLOW "   ⚠️  No SSH VPN users configured"
+        fi
         echo ""
     fi
     
