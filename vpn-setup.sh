@@ -385,28 +385,30 @@ ask_for_config_file() {
     print_header "Configuration File Detection"
     
     if ask_yes_no "Do you have a configuration file for automated setup?"; then
-        print_info "Please enter the name of your configuration file"
-        print_info "Common names: vpn-config.conf, config.conf, setup.conf"
-        print_info "The file should be in the same directory as this script"
-        
-        local config_file
-        get_input "Enter configuration file name:" "config_file" "false"
-        
-        if [[ -f "$config_file" ]]; then
-            if load_config_file "$config_file"; then
-                return 0
+        while true; do
+            print_info "Please enter the name of your configuration file"
+            print_info "Common names: vpn-config.conf, config.conf, setup.conf"
+            print_info "The file should be in the same directory as this script"
+
+            local config_file=""
+            get_input "Enter configuration file name:" "config_file" "false"
+
+            if [[ -f "$config_file" ]]; then
+                if load_config_file "$config_file"; then
+                    return 0
+                else
+                    print_error "Failed to load configuration file. Falling back to interactive mode."
+                    return 1
+                fi
             else
-                print_error "Failed to load configuration file. Falling back to interactive mode."
-                return 1
+                print_error "Configuration file '$config_file' not found!"
+                if ask_yes_no "Do you want to try another file name?"; then
+                    continue
+                else
+                    return 1
+                fi
             fi
-        else
-            print_error "Configuration file '$config_file' not found!"
-            if ask_yes_no "Do you want to try another file name?"; then
-                return ask_for_config_file
-            else
-                return 1
-            fi
-        fi
+        done
     fi
     
     return 1
